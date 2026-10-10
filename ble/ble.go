@@ -23,6 +23,9 @@ const (
 	UARTServiceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 	RXCharUUID      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e" // the host writes packets here
 	TXCharUUID      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e" // the robot notifies packets here
+
+	// The robot advertises its Robot State as service data for this service.
+	deviceInfoServiceUUID = "180a"
 )
 
 var (
@@ -39,6 +42,41 @@ type Advertisement struct {
 	Model            string // "RT1", "RT0" or "Ci3"; empty until the manufacturer data is seen
 	RSSI             int
 	ManufacturerData []byte // including the leading 2-byte company ID
+	// State is the robot's touch, bumper, cliff and battery state, broadcast
+	// so a robot can be picked by touching it before connecting. It is nil
+	// until seen.
+	State *RobotState
+}
+
+// RobotState is the sensor summary a robot broadcasts while advertising.
+type RobotState struct {
+	FrontLeft, FrontRight, RearLeft, RearRight bool // touch sensors
+	LeftBumper, RightBumper                    bool
+	Cliff                                      bool
+	BatteryPercent                             uint8
+}
+
+// Touched reports whether any touch sensor or bumper is pressed.
+func (s RobotState) Touched() bool {
+	return s.FrontLeft || s.FrontRight || s.RearLeft || s.RearRight || s.LeftBumper || s.RightBumper
+}
+
+// parseRobotState decodes the 2-byte Robot State: the first byte is
+// 0b00<Cliff><LBump><RBump><RL><RR><FL><FR>, the second the battery percent.
+func parseRobotState(b []byte) *RobotState {
+	if len(b) != 2 {
+		return nil
+	}
+	return &RobotState{
+		FrontRight:     b[0]&0x01 != 0,
+		FrontLeft:      b[0]&0x02 != 0,
+		RearRight:      b[0]&0x04 != 0,
+		RearLeft:       b[0]&0x08 != 0,
+		RightBumper:    b[0]&0x10 != 0,
+		LeftBumper:     b[0]&0x20 != 0,
+		Cliff:          b[0]&0x40 != 0,
+		BatteryPercent: b[1] & 0x7F,
+	}
 }
 
 // parseModel extracts the robot type string that follows the 2-byte
@@ -58,6 +96,12 @@ func Model(model string) func(Advertisement) bool {
 // Name matches the robot with the given advertised name.
 func Name(name string) func(Advertisement) bool {
 	return func(a Advertisement) bool { return a.Name == name }
+}
+
+// Touched matches a robot whose touch sensors or bumpers are being pressed,
+// so you can pick a robot by putting a hand on it.
+func Touched() func(Advertisement) bool {
+	return func(a Advertisement) bool { return a.State != nil && a.State.Touched() }
 }
 
 // Dial scans until a robot satisfies match, then connects to it.

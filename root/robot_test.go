@@ -492,3 +492,20 @@ func TestLegacyHeading(t *testing.T) {
 		}
 	}
 }
+
+func TestNameAfterSerial(t *testing.T) {
+	r, f := setup(t)
+	ch := async(func() (string, error) { return r.NameAfterSerial(context.Background()) })
+	req := f.next(t)
+	if req.Dev != 0 || req.Cmd != 14 {
+		t.Fatalf("sent %v, want get serial number", req)
+	}
+	f.reply(req, []byte("RT1908F04403"))
+	set := f.next(t)
+	if set.Dev != 0 || set.Cmd != 1 || cString(set.Payload[:]) != "RT1908F04403" {
+		t.Fatalf("sent %v, want set name to the serial", set)
+	}
+	if name, err := wait(t, ch); err != nil || name != "RT1908F04403" {
+		t.Fatalf("NameAfterSerial() = %q, %v", name, err)
+	}
+}

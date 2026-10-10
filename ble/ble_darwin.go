@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -47,7 +49,8 @@ type central struct {
 	stateChange chan struct{} // closed and replaced on every state change
 	scanFn      func(Advertisement)
 	peripherals map[string]objc.ID // retained, by identifier
-	conns       map[objc.ID]*Conn  // by peripheral
+	lastAdv     map[string]Advertisement
+	conns       map[objc.ID]*Conn // by peripheral
 }
 
 var selCache sync.Map
@@ -205,6 +208,7 @@ func setup() error {
 
 	cm.stateChange = make(chan struct{})
 	cm.peripherals = make(map[string]objc.ID)
+	cm.lastAdv = make(map[string]Advertisement)
 	cm.conns = make(map[objc.ID]*Conn)
 	delegate := send(send(objc.ID(delegateClass), "alloc"), "init")
 	queue := dispatchQueueCreate("rootgo.ble", 0) // serial
@@ -268,22 +272,42 @@ func ready(ctx context.Context) error {
 	}
 }
 
+// debug, set by ROOTGO_BLE_DEBUG=1, logs every raw advertisement.
+var debug = os.Getenv("ROOTGO_BLE_DEBUG") != ""
+
 func (c *central) discovered(p, adv, rssi objc.ID) {
+	if debug {
+		log.Printf("ble: advertisement from %q: %s", goString(send(p, "name")), goString(send(adv, "description")))
+	}
 	a := Advertisement{
 		ID:               strings.ToLower(goString(send(send(p, "identifier"), "UUIDString"))),
 		Name:             goString(send(adv, "objectForKey:", nsString("kCBAdvDataLocalName"))),
 		ManufacturerData: goBytes(send(adv, "objectForKey:", nsString("kCBAdvDataManufacturerData"))),
 		RSSI:             int(objc.Send[int64](rssi, sel("integerValue"))),
 	}
-	if a.Name == "" {
-		a.Name = goString(send(p, "name"))
-	}
 	a.Model = parseModel(a.ManufacturerData)
+	if sd := send(adv, "objectForKey:", nsString("kCBAdvDataServiceData")); sd != 0 {
+		a.State = parseRobotState(goBytes(send(sd, "objectForKey:", cbUUID(deviceInfoServiceUUID))))
+	}
 
 	c.mu.Lock()
 	if _, ok := c.peripherals[a.ID]; !ok {
 		c.peripherals[a.ID] = send(p, "retain")
 	}
+	// The robot splits its advertisement across two packets, so fill in what
+	// this one lacks from the last one. The peripheral's own name property is
+	// deliberately not used: macOS caches it and it goes stale after SetName.
+	last := c.lastAdv[a.ID]
+	if a.Name == "" {
+		a.Name = last.Name
+	}
+	if a.ManufacturerData == nil {
+		a.ManufacturerData, a.Model = last.ManufacturerData, last.Model
+	}
+	if a.State == nil {
+		a.State = last.State
+	}
+	c.lastAdv[a.ID] = a
 	fn := c.scanFn
 	c.mu.Unlock()
 	if fn != nil {

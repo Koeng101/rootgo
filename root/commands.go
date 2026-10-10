@@ -76,6 +76,23 @@ func (r *Robot) SetName(ctx context.Context, name string) error {
 	return r.command(ctx, devGeneral, 1, []byte(name))
 }
 
+// NameAfterSerial sets the robot's advertising name to its serial number,
+// giving it a unique name, and returns that name. Robots ship named "ROOT",
+// so this makes several robots easy to tell apart when scanning.
+func (r *Robot) NameAfterSerial(ctx context.Context) (string, error) {
+	serial, err := r.SerialNumber(ctx)
+	if err != nil {
+		return "", err
+	}
+	if serial == "" {
+		return "", fmt.Errorf("root: robot reported an empty serial number")
+	}
+	if err := r.SetName(ctx, serial); err != nil {
+		return "", err
+	}
+	return serial, nil
+}
+
 // Name asks for the robot's BLE advertising name.
 func (r *Robot) Name(ctx context.Context) (string, error) {
 	p, err := r.query(ctx, devGeneral, 2, nil)

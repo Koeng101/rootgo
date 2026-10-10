@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -29,6 +30,7 @@ func main() {
 		name    = flag.String("name", "", "connect to the robot with this name (default: first RT1)")
 		move    = flag.Bool("move", false, "drive, rotate, and test that cancelling a drive stops the wheels")
 		trace   = flag.Bool("trace", false, "log every packet sent and received")
+		rename  = flag.Bool("rename-serial", false, "set the robot's name to its serial number")
 		quiet   = flag.Bool("quiet", false, "skip the lights and sound checks")
 		heading = flag.Bool("heading", false, "rotate in place and report poses, to check the heading convention")
 		phase4  = flag.Bool("phase4", false, "test sensors, event enabling, sweep, notes and navigation (drives a ~15cm square)")
@@ -48,13 +50,17 @@ func main() {
 	err := ble.Scan(scanCtx, func(a ble.Advertisement) {
 		mu.Lock()
 		defer mu.Unlock()
-		if old, ok := seen[a.ID]; ok && old.Model != "" {
+		old, ok := seen[a.ID]
+		seen[a.ID] = a
+		if ok && old.Name == a.Name && old.Model == a.Model && (old.State == nil) == (a.State == nil) &&
+			(a.State == nil || *old.State == *a.State) {
 			return
 		}
-		seen[a.ID] = a
-		if a.Model != "" || len(seen) == 1 {
-			log.Printf("  found %q model=%q rssi=%d id=%s mfr=% x", a.Name, a.Model, a.RSSI, a.ID, a.ManufacturerData)
+		state := "?"
+		if a.State != nil {
+			state = fmt.Sprintf("%+v", *a.State)
 		}
+		log.Printf("  found %q model=%q rssi=%d id=%s state=%s", a.Name, a.Model, a.RSSI, a.ID, state)
 	})
 	cancel()
 	if err != nil {
@@ -112,6 +118,14 @@ func main() {
 	batt, err := r.Battery(ctx)
 	check("Battery", err)
 	log.Printf("battery %d%% %dmV", batt.Percent, batt.MilliVolts)
+
+	if *rename {
+		newName, err := r.NameAfterSerial(ctx)
+		check("NameAfterSerial", err)
+		got, err := r.Name(ctx)
+		check("Name", err)
+		log.Printf("renamed to %q; robot now reports name %q", newName, got)
+	}
 
 	major, minor, err := r.Protocol(ctx)
 	check("Protocol", err)

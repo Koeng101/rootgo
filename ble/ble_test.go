@@ -17,3 +17,17 @@ func TestParseModel(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRobotState(t *testing.T) {
+	if s := parseRobotState([]byte{0x00, 0x5a}); s == nil || s.Touched() || s.BatteryPercent != 90 {
+		t.Fatalf("idle state = %+v", s)
+	}
+	s := parseRobotState([]byte{0x6A, 0x32}) // cliff, left bump, rear left, front left
+	want := RobotState{FrontLeft: true, RearLeft: true, LeftBumper: true, Cliff: true, BatteryPercent: 50}
+	if s == nil || *s != want || !s.Touched() {
+		t.Fatalf("parseRobotState = %+v, want %+v", s, want)
+	}
+	if parseRobotState([]byte{1}) != nil {
+		t.Fatal("accepted a 1-byte state")
+	}
+}
