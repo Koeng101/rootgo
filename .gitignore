@@ -1,0 +1,6 @@
+# Build output
+/bin/
+
+# Reference checkouts used while porting; not part of this repository
+/irobot-edu-python-sdk/
+/root-robot-ble-protocol/
